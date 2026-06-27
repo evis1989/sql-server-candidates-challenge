@@ -23,7 +23,8 @@ namespace SyncAgent
             var dispatcher = new TaskDispatcher(new ITaskHandler[]
             {
                 new GetCustomersHandler(dbFactory),
-                new GetProductsHandler(dbFactory)
+                new GetProductsHandler(dbFactory),
+                new GetOrdersHandler(dbFactory)
             });
             var loop = new SyncLoop(client, dispatcher, settings);
 
