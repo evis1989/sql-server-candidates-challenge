@@ -18,7 +18,8 @@
 USE AdventureWorks2025;
 GO
 
-DECLARE @modifiedSince datetime2 = '2025-01-01T00:00:00';
+-- AdventureWorks2025 data spans roughly 2011-2014, so filter from 2011 to get rows.
+DECLARE @modifiedSince datetime2 = '2011-01-01T00:00:00';
 
 /* ---------------------------------------------------------------------------
    1. GetCustomers
