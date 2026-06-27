@@ -18,12 +18,15 @@ namespace SyncAgent
         private readonly TaskDispatcher _dispatcher;
         private readonly TimeSpan _pollingInterval;
         private readonly ManualResetEvent _stop = new ManualResetEvent(false);
+        private readonly ResultPublisher _publisher;
 
         public SyncLoop(ISyncPlatformClient client, TaskDispatcher dispatcher, AppSettings settings)
         {
             _client = client;
             _dispatcher = dispatcher;
             _pollingInterval = TimeSpan.FromSeconds(settings.PollingIntervalSeconds);
+            // Same stop signal so a retry backoff is interrupted by OnStop.
+            _publisher = new ResultPublisher(client, _stop);
         }
 
         /// <summary>Runs the loop on the calling thread until <see cref="Stop"/> is signalled.</summary>
@@ -66,14 +69,8 @@ namespace SyncAgent
                 result = SyncResult.Failed(task.TaskId, task.TaskType, ex.Message);
             }
 
-            try
-            {
-                _client.PostResult(result);
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Failed to post result for task " + task.TaskId + ": " + ex.Message);
-            }
+            // Publisher handles transient retries, backoff, and logging; it never throws.
+            _publisher.Publish(result);
         }
 
         /// <summary>Signals the loop to exit at the next safe point and wakes it if sleeping.</summary>

@@ -59,7 +59,10 @@ namespace SyncAgent.Http
             using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
             using (var response = _http.PostAsync(ResultPath, content).GetAwaiter().GetResult())
             {
-                response.EnsureSuccessStatusCode();
+                // Surface the status code (4xx vs 5xx) so the retry policy can classify it.
+                if (!response.IsSuccessStatusCode)
+                    throw new PlatformResponseException(response.StatusCode,
+                        "POST result returned " + (int)response.StatusCode + " " + response.ReasonPhrase + ".");
             }
         }
     }
