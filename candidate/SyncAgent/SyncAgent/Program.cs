@@ -24,7 +24,8 @@ namespace SyncAgent
             {
                 new GetCustomersHandler(dbFactory),
                 new GetProductsHandler(dbFactory),
-                new GetOrdersHandler(dbFactory)
+                new GetOrdersHandler(dbFactory),
+                new GetProductInventoryHandler(dbFactory)
             });
             var loop = new SyncLoop(client, dispatcher, settings);
 
