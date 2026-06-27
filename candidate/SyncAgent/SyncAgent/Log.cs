@@ -5,7 +5,6 @@ namespace SyncAgent
 {
     /// <summary>
     /// Minimal logger: timestamped lines to console and a log file beside the exe.
-    /// ponytail: file+console sink, swap for Serilog/EventLog if structured logging is needed.
     /// </summary>
     public static class Log
     {

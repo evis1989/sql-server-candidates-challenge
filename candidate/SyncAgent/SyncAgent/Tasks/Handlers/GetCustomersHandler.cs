@@ -11,8 +11,8 @@ namespace SyncAgent.Tasks.Handlers
     public class GetCustomersHandler : SqlTaskHandler
     {
         // Filter on the Customer entity's own ModifiedDate (the sync trigger).
-        // ponytail: one flat row per customer — first email/phone/address only,
-        // because the contract wants a single address, not an array.
+        // One flat row per customer: first email/phone/address only (the contract
+        // wants a single address, not an array).
         private const string CustomersSql = @"
 SELECT
     c.CustomerID,
