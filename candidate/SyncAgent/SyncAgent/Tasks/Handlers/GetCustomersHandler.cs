@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Data;
 using SyncAgent.Database;
 using SyncAgent.Models;
@@ -9,14 +7,13 @@ namespace SyncAgent.Tasks.Handlers
     /// <summary>
     /// Executes GetCustomers tasks: queries AdventureWorks2025 for customers modified
     /// since the task's cut-off and maps each to the flat customer contract shape.
-    /// Reference implementation for the other task handlers.
     /// </summary>
-    public class GetCustomersHandler : ITaskHandler
+    public class GetCustomersHandler : SqlTaskHandler
     {
         // Filter on the Customer entity's own ModifiedDate (the sync trigger).
         // ponytail: one flat row per customer — first email/phone/address only,
         // because the contract wants a single address, not an array.
-        private const string Sql = @"
+        private const string CustomersSql = @"
 SELECT
     c.CustomerID,
     c.AccountNumber,
@@ -59,55 +56,16 @@ LEFT JOIN Person.CountryRegion cr
 WHERE c.ModifiedDate >= @modifiedSince
 ORDER BY c.CustomerID;";
 
-        private readonly IDbConnectionFactory _connectionFactory;
-
         public GetCustomersHandler(IDbConnectionFactory connectionFactory)
+            : base(connectionFactory)
         {
-            _connectionFactory = connectionFactory;
         }
 
-        public bool CanHandle(string taskType)
-        {
-            return taskType == TaskTypes.GetCustomers;
-        }
+        protected override string TaskType => TaskTypes.GetCustomers;
 
-        public SyncResult Execute(SyncTask task)
-        {
-            try
-            {
-                var rows = Query(task.Parameters.ModifiedSince);
-                return SyncResult.Completed(task.TaskId, task.TaskType, rows);
-            }
-            catch (Exception ex)
-            {
-                return SyncResult.Failed(task.TaskId, task.TaskType, ex.Message);
-            }
-        }
+        protected override string Sql => CustomersSql;
 
-        private IReadOnlyList<object> Query(DateTime modifiedSince)
-        {
-            var rows = new List<object>();
-            using (var connection = _connectionFactory.CreateConnection())
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = Sql;
-
-                var parameter = command.CreateParameter();
-                parameter.ParameterName = "@modifiedSince";
-                parameter.Value = modifiedSince;
-                command.Parameters.Add(parameter);
-
-                connection.Open();
-                using (var reader = command.ExecuteReader())
-                {
-                    while (reader.Read())
-                        rows.Add(Map(reader));
-                }
-            }
-            return rows;
-        }
-
-        private static CustomerRecord Map(IDataReader reader)
+        protected override object MapRow(IDataReader reader)
         {
             return new CustomerRecord
             {
@@ -123,12 +81,6 @@ ORDER BY c.CustomerID;";
                 PostalCode = GetStringOrNull(reader, "PostalCode"),
                 CountryRegion = GetStringOrNull(reader, "CountryRegion")
             };
-        }
-
-        private static string GetStringOrNull(IDataReader reader, string column)
-        {
-            var ordinal = reader.GetOrdinal(column);
-            return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
         }
     }
 }

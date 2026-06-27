@@ -22,7 +22,8 @@ namespace SyncAgent
             // Register a handler per task type. Unknown types still fail soft.
             var dispatcher = new TaskDispatcher(new ITaskHandler[]
             {
-                new GetCustomersHandler(dbFactory)
+                new GetCustomersHandler(dbFactory),
+                new GetProductsHandler(dbFactory)
             });
             var loop = new SyncLoop(client, dispatcher, settings);
 
