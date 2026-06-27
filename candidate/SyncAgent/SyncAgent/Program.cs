@@ -5,6 +5,7 @@ using SyncAgent.Configuration;
 using SyncAgent.Database;
 using SyncAgent.Http;
 using SyncAgent.Tasks;
+using SyncAgent.Tasks.Handlers;
 
 namespace SyncAgent
 {
@@ -16,13 +17,14 @@ namespace SyncAgent
             var settings = AppSettings.Load();
             var client = SyncPlatformClient.Create(settings);
 
-            // No handlers registered yet — the dispatcher fails soft on unknown task types.
-            var dispatcher = new TaskDispatcher(new ITaskHandler[0]);
-            var loop = new SyncLoop(client, dispatcher, settings);
-
-            // DB seam wired here for handlers added in a later change.
             IDbConnectionFactory dbFactory = new DbConnectionFactory(settings);
-            _ = dbFactory;
+
+            // Register a handler per task type. Unknown types still fail soft.
+            var dispatcher = new TaskDispatcher(new ITaskHandler[]
+            {
+                new GetCustomersHandler(dbFactory)
+            });
+            var loop = new SyncLoop(client, dispatcher, settings);
 
             if (Environment.UserInteractive)
             {
