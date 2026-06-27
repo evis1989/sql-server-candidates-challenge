@@ -60,3 +60,6 @@ $RECYCLE.BIN/
 
 ## User-specific
 *.DotSettings.user
+
+## Local editor config
+src/.claude/
