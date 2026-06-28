@@ -70,9 +70,11 @@ sqlcmd -S localhost -d AdventureWorks2025 -E -i candidate/SyncAgent/sql/smoke-te
 
 **A `SqlTaskHandler` base extracted at the second handler, not the first.** The first handler (GetCustomers) was written self-contained — with one implementation there was nothing to share. When GetProducts arrived and the plumbing actually repeated, the shared template (`TaskType` / `Sql` / `MapRow`) was extracted, then the read primitive itself (`DbQuery.ReadRows`) when GetOrders needed two queries on one connection. Abstractions were introduced when duplication proved real, not speculatively.
 
-**GetOrders uses two queries, not a header×detail JOIN.** Headers filtered by `modifiedSince`, then details fetched for those ids via a parameterized `IN (@id0..@idN)` list and stitched in memory. This keeps each query simple and independently testable and avoids duplicating header data across detail rows. Zero headers short-circuits the detail query (an `IN ()` is invalid SQL).
+**GetOrders uses two queries, not a header×detail JOIN.** Headers filtered by `modifiedSince`, then details fetched for those ids via a parameterized `IN (@id0..@idN)` list and stitched in memory. This keeps each query simple and independently testable and avoids duplicating header data across detail rows. Zero headers short-circuits the detail query (an `IN ()` is invalid SQL). The detail ids are queried in **batches of 1000** to stay under SQL Server's 2100-parameter limit, so an arbitrarily large `modifiedSince` window (e.g. an initial full sync) still succeeds.
 
-**Spec-driven workflow (OpenSpec).** Each of the five pieces (scaffold + four handlers) was a separate change with a proposal, spec, design, and tasks before any code — captured under `src/openspec/`.
+**Bounded retry on result delivery.** Posting a result is wrapped in a `ResultPublisher` that retries transient failures up to 3 attempts (1 + 2), backing off 1s then 2s. It retries transport errors, HTTP timeouts, and HTTP `5xx`, but **not** `4xx` or serialization errors (retrying those can't help). The backoff is interrupted by the service stop signal, the payload is identical across attempts, and it never throws — on exhaustion or a non-retryable error it logs and returns. Because `HttpRequestException` does not carry the status code on .NET Framework, `PostResult` throws a small `PlatformResponseException` carrying it so the policy can tell `5xx` from `4xx`. No Polly and no persistent outbox were added — the platform re-queues unconfirmed tasks, so a durable queue was out of scope.
+
+**Spec-driven workflow (OpenSpec).** Each change — the scaffold, the four handlers, the result-delivery retry, and the GetOrders id-batching fix — was a separate change with a proposal, spec, design, and tasks before any code, captured under `src/openspec/`.
 
 ---
 
@@ -82,14 +84,15 @@ sqlcmd -S localhost -d AdventureWorks2025 -E -i candidate/SyncAgent/sql/smoke-te
 - **API key from configuration, not hardcoded.** Loaded from `App.config` into `AppSettings` and sent as the `X-Api-Key` header on every platform request.
 - **No sensitive data logged.** The logger records lifecycle and error messages only, not row data or credentials.
 - **Fail-soft, no information leakage on crash.** Errors are caught, logged, and reported back as `failed` results; the service does not crash or surface stack traces to the platform.
+- **Retry does not hammer client/auth errors.** The result-delivery retry treats `4xx` (including auth/contract failures) as non-retryable and stops after the first attempt — only genuinely transient failures (`5xx`, timeouts, transport) are retried.
 
 ---
 
 ## Testing Strategy
 
-**25 unit tests, all green**, run with `dotnet test`.
+**30 unit tests, all green**, run with `dotnet test`.
 
-- **What is tested:** each handler's `CanHandle`, row mapping (including decimals, dates, and tinyint/smallint integer reads), and `modifiedSince` parameter binding; the GetOrders two-query stitch, the empty-headers short-circuit, and its `IN` parameter binding; the dispatcher's fail-soft on unknown types; `SyncResult` serialization (`errorMessage` always present, `null` when empty); and the platform client's `200`→task / `204`→null handling.
+- **What is tested:** each handler's `CanHandle`, row mapping (including decimals, dates, and tinyint/smallint integer reads), and `modifiedSince` parameter binding; the GetOrders two-query stitch, the empty-headers short-circuit, its `IN` parameter binding, and the detail-query batching (a large id set split into multiple batches); the dispatcher's fail-soft on unknown types; `SyncResult` serialization (`errorMessage` always present, `null` when empty); the platform client's `200`→task / `204`→null handling; and the result-delivery retry (transient-then-success, permanent `5xx` exhaustion, non-retryable `4xx`, and stop-during-backoff).
 - **How:** the ADO.NET interfaces (`IDbConnection` / `IDbCommand` / `IDataReader`) and `HttpMessageHandler` are mocked, so handlers and the client are tested without a live database or server.
 - **What is deliberately not unit-tested:** the SQL against the real schema — a mocked reader can't prove the joins/columns exist. That gap is covered by `sql/smoke-test.sql`, to be run once against a live AdventureWorks2025.
 - **With more time:** integration tests against a restored AdventureWorks2025 and an end-to-end run against the SyncPlatform app.
@@ -102,7 +105,7 @@ sqlcmd -S localhost -d AdventureWorks2025 -E -i candidate/SyncAgent/sql/smoke-te
 - **GetCustomers takes the first email/phone/address per customer** (by id order) to produce one flat row, as the contract is flat. A customer with multiple contacts returns the first.
 - **`customerName` is null for store orders** (customers with no associated person), consistent with the flat contract.
 - **No MSI/WiX installer.** Service installation is manual via `sc.exe` (installer explicitly out of scope).
-- **No retry/backoff beyond sleep-on-204.** On error the loop logs and continues; there is no exponential backoff or dead-letter handling.
+- **Result delivery has retry but no durable outbox.** Posting a result retries transient failures (3 attempts, 1s/2s backoff), but if the process dies mid-retry the result is lost — there is no persistent queue. By design: the platform re-queues unconfirmed tasks, so a durable outbox was out of scope.
 
 ---
 
@@ -110,8 +113,8 @@ sqlcmd -S localhost -d AdventureWorks2025 -E -i candidate/SyncAgent/sql/smoke-te
 
 This solution was built with **Claude Code (Claude Opus 4.8)** driving an **OpenSpec spec-driven workflow**. Specifically:
 
-- Each piece — the scaffold and each of the four handlers — was developed as a separate OpenSpec change: `propose` (proposal + spec + design + tasks), then `apply` (implementation + tests), then `archive`.
-- I (the candidate) **reviewed and explicitly approved every design decision** before implementation — e.g. the dedicated-thread polling pattern, when to extract the `SqlTaskHandler` base and the `DbQuery` primitive, the two-query approach for GetOrders, the `Convert.ToInt32` reads for tinyint/smallint, and serializing `errorMessage` as explicit `null`.
+- Each piece — the scaffold, each of the four handlers, the result-delivery retry, and the GetOrders id-batching fix — was developed as a separate OpenSpec change: `propose` (proposal + spec + design + tasks), then `apply` (implementation + tests), then `archive`.
+- I (the candidate) **reviewed and explicitly approved every design decision** before implementation — e.g. the dedicated-thread polling pattern, when to extract the `SqlTaskHandler` base and the `DbQuery` primitive, the two-query approach for GetOrders, the `Convert.ToInt32` reads for tinyint/smallint, serializing `errorMessage` as explicit `null`, the bounded-retry policy and its retryable/non-retryable classification, and batching the GetOrders detail lookup under the parameter cap.
 - Claude wrote the C# code, the unit tests, the SQL queries, and the OpenSpec artifacts; I directed the architecture, set constraints, and verified build/test results at each step.
 
 ---
@@ -125,7 +128,9 @@ This solution was built with **Claude Code (Claude Opus 4.8)** driving an **Open
 - GetOrders handler (two-query + stitch) + `DbQuery` extraction: ~ 20 min
 - GetProductInventory handler: ~ 10 min
 - Smoke script + submission write-up: ~ 10 min
-- **Total: ~ 3 hrs**
+- Result-delivery retry (publisher, classification, tests): _[~ min — fill in]_
+- GetOrders id-batching fix + live-DB debugging (Docker SQL auth, data date range): _[~ min — fill in]_
+- **Total: ~ 3 hrs** _(plus the retry/batching/debugging above — update)_
 
 ---
 
