@@ -128,9 +128,9 @@ This solution was built with **Claude Code (Claude Opus 4.8)** driving an **Open
 - GetOrders handler (two-query + stitch) + `DbQuery` extraction: ~ 20 min
 - GetProductInventory handler: ~ 10 min
 - Smoke script + submission write-up: ~ 10 min
-- Result-delivery retry (publisher, classification, tests): _[~ min — fill in]_
-- GetOrders id-batching fix + live-DB debugging (Docker SQL auth, data date range): _[~ min — fill in]_
-- **Total: ~ 3 hrs** _(plus the retry/batching/debugging above — update)_
+- Result-delivery retry (publisher, classification, tests): ~ 20 min
+- GetOrders id-batching fix + live-DB debugging (Docker SQL auth, data date range, build/run): ~ 40 min
+- **Total: ~ 4 hrs**
 
 ---
 
