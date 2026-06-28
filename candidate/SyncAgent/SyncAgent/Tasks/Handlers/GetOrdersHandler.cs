@@ -47,11 +47,23 @@ WHERE sod.SalesOrderID IN (";
         private const string DetailSqlTail = @")
 ORDER BY sod.SalesOrderID, sod.SalesOrderDetailID;";
 
+        // SQL Server caps a command at 2100 parameters; chunk the detail id list
+        // well under that so a large modifiedSince window still works.
+        private const int DefaultDetailBatchSize = 1000;
+
         private readonly IDbConnectionFactory _connectionFactory;
+        private readonly int _detailBatchSize;
 
         public GetOrdersHandler(IDbConnectionFactory connectionFactory)
+            : this(connectionFactory, DefaultDetailBatchSize)
+        {
+        }
+
+        // Test seam: a smaller batch size exercises batching without thousands of rows.
+        public GetOrdersHandler(IDbConnectionFactory connectionFactory, int detailBatchSize)
         {
             _connectionFactory = connectionFactory;
+            _detailBatchSize = detailBatchSize;
         }
 
         public bool CanHandle(string taskType)
@@ -86,20 +98,26 @@ ORDER BY sod.SalesOrderID, sod.SalesOrderDetailID;";
             }
         }
 
-        private static void AttachDetails(IDbConnection connection, IReadOnlyList<OrderRecord> orders)
+        private void AttachDetails(IDbConnection connection, IReadOnlyList<OrderRecord> orders)
         {
             var byId = orders.ToDictionary(o => o.SalesOrderId);
 
-            var details = DbQuery.ReadRows(
-                connection,
-                BuildDetailSql(orders.Count),
-                command => BindIds(command, orders),
-                MapDetail);
-
-            foreach (DetailRow row in details)
+            // Query details in batches so the IN parameter count stays under the cap.
+            for (var start = 0; start < orders.Count; start += _detailBatchSize)
             {
-                if (byId.TryGetValue(row.OrderId, out var order))
-                    order.OrderDetails.Add(row.Detail);
+                var batch = orders.Skip(start).Take(_detailBatchSize).ToList();
+
+                var details = DbQuery.ReadRows(
+                    connection,
+                    BuildDetailSql(batch.Count),
+                    command => BindIds(command, batch),
+                    MapDetail);
+
+                foreach (DetailRow row in details)
+                {
+                    if (byId.TryGetValue(row.OrderId, out var order))
+                        order.OrderDetails.Add(row.Detail);
+                }
             }
         }
 

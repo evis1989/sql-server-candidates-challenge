@@ -128,6 +128,44 @@ namespace SyncAgent.Tests.Tasks.Handlers
             Assert.That(result.ErrorMessage, Is.EqualTo("db down"));
         }
 
+        [Test]
+        public void Execute_batches_detail_query_to_stay_under_the_parameter_cap()
+        {
+            var date = new DateTime(2022, 5, 30, 0, 0, 0, DateTimeKind.Utc);
+            var headers = new[]
+            {
+                HeaderRow(1, date, (byte)5, "A", "A", "AW1", 1m),
+                HeaderRow(2, date, (byte)5, "B", "B", "AW2", 1m),
+                HeaderRow(3, date, (byte)5, "C", "C", "AW3", 1m)
+            };
+            var batch1 = new[]
+            {
+                DetailRow(1, "P1", "PN1", 1m, (short)1, 1m),
+                DetailRow(2, "P2", "PN2", 1m, (short)1, 1m)
+            };
+            var batch2 = new[] { DetailRow(3, "P3", "PN3", 1m, (short)1, 1m) };
+
+            var detailParamBatches = new List<List<IDbDataParameter>>();
+            var factory = FactoryWithReaders(
+                BuildReader(HeaderCols, headers),
+                new[] { BuildReader(DetailCols, batch1), BuildReader(DetailCols, batch2) },
+                detailParamBatches);
+            // batch size 2 → 3 orders split into batches of [1,2] and [3]
+            var handler = new GetOrdersHandler(factory, 2);
+
+            var result = handler.Execute(NewTask());
+
+            Assert.That(result.RecordCount, Is.EqualTo(3));
+            var orders = new List<OrderRecord>();
+            foreach (var o in result.Data) orders.Add((OrderRecord)o);
+            Assert.That(orders[0].OrderDetails[0].ProductNumber, Is.EqualTo("PN1"));
+            Assert.That(orders[2].OrderDetails[0].ProductNumber, Is.EqualTo("PN3"));
+
+            Assert.That(detailParamBatches, Has.Count.EqualTo(2), "two detail queries, one per batch");
+            Assert.That(detailParamBatches[0], Has.Count.EqualTo(2), "first batch binds 2 ids");
+            Assert.That(detailParamBatches[1], Has.Count.EqualTo(1), "second batch binds 1 id");
+        }
+
         // --- helpers ---
 
         private static SyncTask NewTask(DateTime? modifiedSince = null)
@@ -188,6 +226,30 @@ namespace SyncAgent.Tests.Tasks.Handlers
             var connection = new Mock<IDbConnection>();
             // Return the header command on the first CreateCommand call, the detail command on the second.
             connection.Setup(c => c.CreateCommand()).Returns(NextCommand(headerCommand, detailCommand, onCreateCommand));
+
+            var factory = new Mock<IDbConnectionFactory>();
+            factory.Setup(f => f.CreateConnection()).Returns(connection.Object);
+            return factory.Object;
+        }
+
+        // Header command first, then one detail command per batch; each detail batch's
+        // bound parameters are captured into detailParamBatches in order.
+        private static IDbConnectionFactory FactoryWithReaders(
+            IDataReader headerReader,
+            IReadOnlyList<IDataReader> detailReaders,
+            List<List<IDbDataParameter>> detailParamBatches)
+        {
+            var commands = new Queue<IDbCommand>();
+            commands.Enqueue(BuildCommand(headerReader, new List<IDbDataParameter>()));
+            foreach (var reader in detailReaders)
+            {
+                var captured = new List<IDbDataParameter>();
+                detailParamBatches.Add(captured);
+                commands.Enqueue(BuildCommand(reader, captured));
+            }
+
+            var connection = new Mock<IDbConnection>();
+            connection.Setup(c => c.CreateCommand()).Returns(() => commands.Dequeue());
 
             var factory = new Mock<IDbConnectionFactory>();
             factory.Setup(f => f.CreateConnection()).Returns(connection.Object);
