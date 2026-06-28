@@ -92,14 +92,13 @@ sqlcmd -S localhost -d AdventureWorks2025 -E -i candidate/SyncAgent/sql/smoke-te
 - **What is tested:** each handler's `CanHandle`, row mapping (including decimals, dates, and tinyint/smallint integer reads), and `modifiedSince` parameter binding; the GetOrders two-query stitch, the empty-headers short-circuit, and its `IN` parameter binding; the dispatcher's fail-soft on unknown types; `SyncResult` serialization (`errorMessage` always present, `null` when empty); and the platform client's `200`→task / `204`→null handling.
 - **How:** the ADO.NET interfaces (`IDbConnection` / `IDbCommand` / `IDataReader`) and `HttpMessageHandler` are mocked, so handlers and the client are tested without a live database or server.
 - **What is deliberately not unit-tested:** the SQL against the real schema — a mocked reader can't prove the joins/columns exist. That gap is covered by `sql/smoke-test.sql`, to be run once against a live AdventureWorks2025.
-- **With more time:** integration tests against a restored AdventureWorks2025, an end-to-end run against the SyncPlatform app, and a test for the `IN`-list batching described under Known Limitations.
+- **With more time:** integration tests against a restored AdventureWorks2025 and an end-to-end run against the SyncPlatform app.
 
 ---
 
 ## Known Limitations
 
 - **SQL not verified against a live database in CI.** Tests mock the reader; `sql/smoke-test.sql` is provided for manual verification before submission.
-- **GetOrders `IN` list is not batched.** SQL Server caps parameters at 2100; a `modifiedSince` window returning more than ~2100 orders would exceed it. Irrelevant at the documented sample volumes; if it ever mattered, the fix is to batch the ids or use a table-valued parameter. Documented in the OpenSpec design record for add-get-orders-handler.
 - **GetCustomers takes the first email/phone/address per customer** (by id order) to produce one flat row, as the contract is flat. A customer with multiple contacts returns the first.
 - **`customerName` is null for store orders** (customers with no associated person), consistent with the flat contract.
 - **No MSI/WiX installer.** Service installation is manual via `sc.exe` (installer explicitly out of scope).
